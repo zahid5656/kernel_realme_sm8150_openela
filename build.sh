@@ -13,8 +13,8 @@ CLANG_ARCHIVE="$CLANG_DIR/$CLANG_VERSION.tgz"
 CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/$CLANG_VERSION.tgz"
 
 ANYKERNEL_DIR="$KERNEL_DIR/AnyKernel3"
-ANYKERNEL_REPO="https://github.com/nayem8854/AnyKernel3.git"
-ANYKERNEL_BRANCH="rmx1931"
+ANYKERNEL_REPO="https://github.com/zahid5656/AnyKernel3.git"
+ANYKERNEL_BRANCH="main"
 
 CONFIG_FILE="samurai_defconfig"
 KSU_REPO_DIR="$KERNEL_DIR/KernelSU-Next"
@@ -177,17 +177,28 @@ patch_ksu_config()
 
     msg "Patching ${defconfig_file}"
 
+    sed -i \
+        -e '/^CONFIG_KSU_KPROBE_HOOKS=y$/d' \
+        -e '/^CONFIG_KSU_KPROBES_HOOK=y$/d' \
+        -e '/^CONFIG_KSU_HOOK_FTRACE_MCOUNT=y$/d' \
+        "$defconfig_file"
+
     grep -qxF "CONFIG_KPROBES=y" "$defconfig_file" || \
         echo "CONFIG_KPROBES=y" >> "$defconfig_file"
 
     grep -qxF "CONFIG_KPROBE_EVENTS=y" "$defconfig_file" || \
         echo "CONFIG_KPROBE_EVENTS=y" >> "$defconfig_file"
 
-    grep -qxF "CONFIG_KSU_KPROBE_HOOKS=y" "$defconfig_file" || \
-        echo "CONFIG_KSU_KPROBE_HOOKS=y" >> "$defconfig_file"
-
     grep -qxF "CONFIG_KSU=y" "$defconfig_file" || \
         echo "CONFIG_KSU=y" >> "$defconfig_file"
+
+    grep -qxF "CONFIG_KSU_MANUAL_HOOK=y" "$defconfig_file" || \
+        echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$defconfig_file"
+
+    if ! grep -qxF "# CONFIG_KSU_KPROBES_HOOK is not set" "$defconfig_file"; then
+        sed -i '/^CONFIG_KSU_KPROBES_HOOK=y$/d' "$defconfig_file"
+        echo "# CONFIG_KSU_KPROBES_HOOK is not set" >> "$defconfig_file"
+    fi
 }
 
 link_ksu_source()

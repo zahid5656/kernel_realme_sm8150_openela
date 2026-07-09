@@ -72,6 +72,11 @@
 
 #include <trace/events/sched.h>
 
+#if defined(CONFIG_KSU) && defined(CONFIG_KSU_MANUAL_HOOK)
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+			       void *argv, void *envp, int *flags);
+#endif
+
 int suid_dumpable = 0;
 
 static LIST_HEAD(formats);
@@ -1726,6 +1731,12 @@ static int do_execveat_common(int fd, struct filename *filename,
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
+
+#if defined(CONFIG_KSU) && defined(CONFIG_KSU_MANUAL_HOOK)
+	retval = ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+	if (retval)
+		goto out_ret;
+#endif
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
