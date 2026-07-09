@@ -129,3 +129,13 @@ kernel/configs/android-*.cfg
 #Ignoring Android.bp link file
 #
 Android.bp
+
+# Local kernel build artifacts
+/AnyKernel3/
+/KernelSU-Next/
+/out/
+/toolchain/
+/*.log
+/*.zip
+/build-codex-*.log
+/build-openela-*.log

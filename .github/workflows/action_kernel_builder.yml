@@ -1,62 +1,124 @@
-name: Build Kernel
+name: Samurai Kernel Builder
 
 on:
   workflow_dispatch:
-     branches:
-     - openela-base-357-ksun_legacy
+    inputs:
+      ksu_ref:
+        description: KernelSU-Next ref, branch, tag, or commit
+        required: false
+        default: legacy
+      ksu_auto_sync:
+        description: Sync KernelSU-Next before build
+        required: false
+        default: "1"
+      create_release:
+        description: Publish GitHub release with flashable zip
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
 
 jobs:
   build:
+    name: Build flashable AnyKernel3 zip
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    env:
+      KSU_REF: ${{ inputs.ksu_ref || 'legacy' }}
+      KSU_AUTO_SYNC: ${{ inputs.ksu_auto_sync || '1' }}
 
     steps:
-      - name: Checkout
+      - name: Checkout kernel source
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
-      - name: Set timezone
-        run: |
-          sudo timedatectl set-timezone Asia/Dhaka
-
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            bc git-core python2 gnupg flex bison build-essential \
-            zip curl wget zlib1g-dev libc6-dev-i386 \
-            libncurses5 lib32ncurses5-dev x11proto-core-dev \
-            libx11-dev lib32z1-dev libgl1-mesa-dev \
-            libxml2-utils xsltproc unzip fontconfig \
-            libssl-dev ccache cpio
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            cpio \
+            curl \
+            flex \
+            fontconfig \
+            git \
+            git-core \
+            gnupg \
+            lib32ncurses5-dev \
+            lib32z1-dev \
+            libc6-dev-i386 \
+            libgl1-mesa-dev \
+            libncurses5 \
+            libssl-dev \
+            libx11-dev \
+            libxml2-utils \
+            openssl \
+            perl \
+            python3 \
+            tar \
+            unzip \
+            wget \
+            x11proto-core-dev \
+            xsltproc \
+            zip \
+            zlib1g-dev
 
-      - name: Make script executable
+      - name: Cache AOSP clang
+        uses: actions/cache@v4
+        with:
+          path: toolchain/clang-r522817
+          key: aosp-clang-r522817-linux-x86
+
+      - name: Prepare build script
         run: |
-          chmod +x build.sh
           sed -i 's/\r$//' build.sh
+          chmod +x build.sh
+          bash -n build.sh
 
-      - name: Build Kernel
+      - name: Build kernel and package AnyKernel3 zip
+        run: ./build.sh
+
+      - name: Locate flashable zip
+        id: package
         run: |
-          ./build.sh ksu
+          mapfile -t zips < <(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name "*.zip" | sort)
+          if [ "${#zips[@]}" -ne 1 ]; then
+            echo "Expected exactly one flashable zip, found ${#zips[@]}" >&2
+            printf '%s\n' "${zips[@]}" >&2
+            exit 1
+          fi
+          echo "zip=${zips[0]}" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "${zips[0]}")" >> "$GITHUB_OUTPUT"
 
-      - name: Find ZIP
-        id: zip
-        run: |
-          ZIP=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
-          echo "zip=$ZIP" >> $GITHUB_OUTPUT
+      - name: Upload flashable zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.zip }}
+          if-no-files-found: error
 
-      - name: Generate Tag
-        id: tag
-        run: |
-          echo "tag=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
 
-      - name: Create Release
+      - name: Create release
+        if: ${{ inputs.create_release }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Kernel Build ${{ steps.tag.outputs.tag }}
-          files: |
-            ${{ steps.zip.outputs.zip }}
+          tag_name: samurai-${{ github.run_number }}
+          name: Samurai Kernel ${{ github.run_number }}
+          files: ${{ steps.package.outputs.zip }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
