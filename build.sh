@@ -1,101 +1,59 @@
 #!/bin/bash
 
-set -e
+# DEFINE COLORS
+NC='\033[0m'
+RED='\033[0;31m'
+LRD='\033[1;31m'
+LGR='\033[1;32m'
+CYAN='\033[1;36m'
+YELLOW='\033[1;33m'
+ 
+rm -rf out
+make clean && make mrproper
 
-KERNEL_DIR="$(pwd)"
-OUT_DIR="$KERNEL_DIR/out"
-
-TC_DIR="$KERNEL_DIR/toolchains"
-CLANG_DIR="$TC_DIR/clang-r547379"
-
-ANYKERNEL_DIR="$KERNEL_DIR/AnyKernel3"
+kernel_dir="${PWD}"
+CCACHE=$(command -v ccache)
+objdir="${kernel_dir}/out"
+anykernel=$kernel_dir/anykernel
+builddir="${kernel_dir}/build"
+ZIMAGE=$kernel_dir/out/arch/arm64/boot/Image.gz
+kernel_name="samurai-4.14.357"
+zip_name="$kernel_name-$(date +"%d%m%Y-%H%M")-KSU.zip"
 
 CONFIG_FILE="samurai_defconfig"
-
-KERNEL_NAME="Hyper-RMX1931"
-ZIP_NAME="${KERNEL_NAME}-$(date +"%d%m%Y-%H%M")-KSU.zip"
-
-export ARCH=arm64
-export SUBARCH=arm64
-
-export KBUILD_BUILD_USER=build-user
-export KBUILD_BUILD_HOST=nayem8854
+export ARCH="arm64"
+export KBUILD_BUILD_HOST=samurai
+export KBUILD_BUILD_USER=titan
 export KBUILD_BUILD_VERSION=1
+# DEFINE VARIABLES & CLANG TOOLCHAIN
+TC_DIR=${KERNEL_DIR}/toolchain
+CLANG_DIR=$TC_DIR/clang-r522817
+TC_CLONE_FILE=${KERNEL_DIR}/toolchain.sh
 
-GREEN='\033[1;32m'
-RED='\033[1;31m'
-NC='\033[0m'
-
-install_deps() {
-
-    echo -e "${GREEN}Installing dependencies...${NC}"
-
-    apt-get update
-
-    apt-get install -y \
-        bc \
-		python2 \
-        git-core \
-        gnupg \
-        flex \
-        bison \
-        build-essential \
-        zip \
-        curl \
-        wget \
-        zlib1g-dev \
-        libc6-dev-i386 \
-        libncurses5 \
-        lib32ncurses5-dev \
-        x11proto-core-dev \
-        libx11-dev \
-        lib32z1-dev \
-        libgl1-mesa-dev \
-        libxml2-utils \
-        xsltproc \
-        unzip \
-        fontconfig \
-        libssl-dev \
-        ccache \
-        cpio || true
-}
-
-download_clang() {
-
-    if [ -d "$CLANG_DIR/bin" ]; then
-        echo -e "${GREEN}Clang already exists${NC}"
-        return
+##Check if CLANG_DIR exists........
+if ! [ -d "$TC_DIR" ]; then
+    echo -e "${LRD}Toolchain not found! Cloning to $TC_DIR...${NC}"
+    if ! bash $TC_CLONE_FILE-; then
+        echo -e "${RED}Cloning failed! Aborting...${NC}"
+        exit 1
     fi
+fi
 
-    echo -e "${GREEN}Downloading Android LLVM Clang...${NC}"
+echo -e "${YELLOW}Using clang directory: $CLANG_DIR${NC}"
+export PATH="$CLANG_DIR/bin:$PATH"
 
-    mkdir -p "$TC_DIR"
+##SYNC SUBMODULE
+git submodule update --init --recursive
 
-    git clone --depth=1 \
-        https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
-        "$CLANG_DIR"
-}
+#Installing necessary components
+! sudo apt-get install bc git gnupg flex bison build-essential zip curl zlib1g-dev libc6-dev-i386 x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig libssl-dev ccache cpio
 
-setup_env() {
-
-    export PATH="$CLANG_DIR/bin:$PATH"
-
-    if command -v ccache >/dev/null 2>&1; then
-        export CC="ccache clang"
-    else
-        export CC="clang"
-    fi
-}
-
-clean() {
-    rm -rf "$OUT_DIR"
-}
-
+# If KernelSU-Next Enabled
 install_ksu() {
 
     if [[ "$1" == "ksu" ]]; then
 
-        echo -e "${GREEN}Installing KernelSU-Next...${NC}"
+        echo -e "${LGR}Installing KernelSU-Next...${NC}"
 
         curl -LSs \
         "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" \
@@ -103,7 +61,7 @@ install_ksu() {
 
         DEFCONFIG_FILE="arch/arm64/configs/${CONFIG_FILE}"
 
-        echo -e "${GREEN}Patching ${DEFCONFIG_FILE}${NC}"
+        echo -e "${LGR}Patching ${DEFCONFIG_FILE}${NC}"
 
         grep -qxF "CONFIG_KPROBES=y" "$DEFCONFIG_FILE" || \
         echo "CONFIG_KPROBES=y" >> "$DEFCONFIG_FILE"
@@ -117,117 +75,67 @@ install_ksu() {
         grep -qxF "CONFIG_KSU=y" "$DEFCONFIG_FILE" || \
         echo "CONFIG_KSU=y" >> "$DEFCONFIG_FILE"
 
-        echo -e "${GREEN}KernelSU config added${NC}"
-        echo -e "${GREEN}KernelSU-Next installed${NC}"
+        echo -e "${LGR}KernelSU config added${NC}"
+        echo -e "${LGR}KernelSU-Next installed${NC}"
     fi
 }
 
-make_defconfig() {
-
-    echo -e "${GREEN}Generating ${CONFIG_FILE}${NC}"
-
-    make O="$OUT_DIR" \
-         ARCH=arm64 \
-         "$CONFIG_FILE"
+make_defconfig()
+{
+    START=$(date +"%s")
+    echo -e ${LGR} "########### Generating ${CONFIG_FILE}############${NC}"
+    make -s ARCH=${ARCH} O=${objdir} ${CONFIG_FILE}
+#   make -s ARCH=${ARCH} O=${objdir} menuconfig
 }
 
-compile_kernel() {
-
-    echo -e "${GREEN}Building kernel...${NC}"
-
-    make -j"$(nproc --all)" \
-        O="$OUT_DIR" \
-        ARCH=arm64 \
-        CC="$CC" \
-        LLVM=1 \
-        LLVM_IAS=1 \
-        CLANG_TRIPLE=aarch64-linux-gnu- \
-        CROSS_COMPILE=aarch64-linux-gnu- \
-        CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-        2>&1 | tee build.log
+compile()
+{
+    cd ${kernel_dir}
+    echo -e ${LGR} "######### Compiling kernel #########${NC}"
+    make -j$(nproc --all) \
+    O=out \
+    ARCH=${ARCH}\
+    CC="ccache clang" \
+    CLANG_TRIPLE="aarch64-linux-gnu-" \
+    CROSS_COMPILE="aarch64-linux-gnu-" \
+    CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
+    LLVM=1 \
+    LLVM_IAS=1
 }
 
-completion() {
+completion()
+{
+    cd ${objdir}
+    COMPILED_IMAGE=arch/arm64/boot/Image.gz
+    COMPILED_DTBO=arch/arm64/boot/dtbo.img
+    if [[ -f ${COMPILED_IMAGE} && ${COMPILED_DTBO} ]]; then
+    
+        git clone --depth=1 https://github.com/zahid5656/AnyKernel3.git $anykernel
 
-    COMPILED_IMAGE=""
+        mv -f $ZIMAGE ${COMPILED_DTBO} $anykernel
 
-    if [[ -f "$OUT_DIR/arch/arm64/boot/Image.gz-dtb" ]]; then
-        COMPILED_IMAGE="$OUT_DIR/arch/arm64/boot/Image.gz-dtb"
-    elif [[ -f "$OUT_DIR/arch/arm64/boot/Image.gz" ]]; then
-        COMPILED_IMAGE="$OUT_DIR/arch/arm64/boot/Image.gz"
-    fi
-
-    COMPILED_DTBO="$OUT_DIR/arch/arm64/boot/dtbo.img"
-
-    if [[ -n "$COMPILED_IMAGE" ]]; then
-
-        echo -e "${GREEN}Packaging AnyKernel3...${NC}"
-
-        rm -rf "$ANYKERNEL_DIR"
-
-        git clone --depth=1 \
-            -b rmx1931 \
-            https://github.com/nayem8854/AnyKernel3.git \
-            "$ANYKERNEL_DIR"
-
-        cp -f "$COMPILED_IMAGE" "$ANYKERNEL_DIR/"
-
-        if [[ -f "$COMPILED_DTBO" ]]; then
-            cp -f "$COMPILED_DTBO" "$ANYKERNEL_DIR/"
-        fi
-
-        cd "$ANYKERNEL_DIR"
-
+        cd $anykernel
+        find . -name "*.zip" -type f
         find . -name "*.zip" -type f -delete
-
-        zip -r9 AnyKernel.zip ./*
-
-        mv AnyKernel.zip "$ZIP_NAME"
-        mv "$ZIP_NAME" "$KERNEL_DIR/"
-
-        cd "$KERNEL_DIR"
-
-        rm -rf "$ANYKERNEL_DIR"
-
-        END=$(date +%s)
-        DIFF=$((END - START))
-
-        echo
-        echo "Build Time: ${DIFF} seconds"
-        echo
-
-        echo
-
-        echo -e "${GREEN}############################################${NC}"
-        echo -e "${GREEN}############# OkThisIsEpic! ################${NC}"
-        echo -e "${GREEN}############################################${NC}"
-
-        echo
-        echo "Output:"
-        echo "$KERNEL_DIR/$ZIP_NAME"
-
+        zip -r AnyKernel.zip *
+        mv AnyKernel.zip $zip_name
+        mv $anykernel/$zip_name $kernel_dir/$zip_name
+        rm -rf $anykernel
+        END=$(date +"%s")
+        DIFF=$(($END - $START))
+        echo -e ${LGR} "############################################"
+        echo -e ${LGR} "########  Compiled Successfully!!  #########"
+        echo -e ${LGR} "############################################${NC}"
         exit 0
-
     else
-
-        echo -e "${RED}############################################${NC}"
-        echo -e "${RED}##         This Is Not Epic :'(          ##${NC}"
-        echo -e "${RED}############################################${NC}"
-
-        echo
-        echo "Missing: Image.gz-dtb or Image.gz"
-
+        echo -e ${RED} "############################################"
+        echo -e ${RED} "##        ERROR!!! Unsccessfull :'(       ##"
+        echo -e ${RED} "############################################${NC}"
         exit 1
     fi
 }
-
-START=$(date +%s)
-
-#install_deps
-download_clang
-setup_env
 install_ksu "$1"
-#clean
 make_defconfig
-compile_kernel
+compile
 completion
+cd ${kernel_dir}

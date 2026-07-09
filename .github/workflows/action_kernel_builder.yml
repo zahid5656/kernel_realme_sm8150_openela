@@ -2,6 +2,8 @@ name: Build Kernel
 
 on:
   workflow_dispatch:
+     branches:
+     - openela-base-357-ksun_legacy
 
 permissions:
   contents: write
