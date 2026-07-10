@@ -1,0 +1,51 @@
+name: Build Samurai Kernel
+
+on:
+  workflow_dispatch: 
+  push:
+    branches:
+      - los-23-debug 
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          ref: los-23-debug 
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc python2 git-core gnupg flex bison build-essential zip curl wget zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig libssl-dev ccache cpio
+
+      - name: Cache Clang Toolchain
+        id: cache-clang
+        uses: actions/cache@v4
+        with:
+          path: toolchains/clang-r522817
+          key: clang-r522817-v1
+
+      - name: Execute Kernel Build Script
+        run: |
+          chmod +x build.sh
+          ./build.sh ksu
+
+      - name: Upload Flashable Kernel Zip
+        if: success() # Only uploads the zip if the build succeeds
+        uses: actions/upload-artifact@v4
+        with:
+          name: Samurai-Kernel-Package-Debug
+          path: "*.zip"
+          if-no-files-found: error
+
+      - name: Upload Build Log Artifact
+        if: always() # ALWAYS uploads the log, even if compilation crashes or fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-Build-Log
+          path: build.log
+          if-no-files-found: warn
