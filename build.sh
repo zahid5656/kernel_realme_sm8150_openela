@@ -23,7 +23,7 @@ KSU_LEGACY_BRANCH="${KSU_LEGACY_BRANCH:-legacy}"
 KSU_REF="${KSU_REF:-$KSU_LEGACY_BRANCH}"
 KSU_AUTO_SYNC="${KSU_AUTO_SYNC:-1}"
 
-KERNEL_NAME="samurai-4.14.357"
+KERNEL_NAME="samurai-4.14.356"
 DATE=$(date +"[%d%m%Y-%H%M]")
 TIME=$(date +"%H.%M.%S")
 ZIP_NAME="$KERNEL_NAME-$DATE-KSU_Next.zip"
@@ -156,7 +156,7 @@ setup_env()
 {
     export PATH="$CLANG_DIR/bin:$PATH"
 
-    if have_cmd ccache; then
+    if [[ "${USE_CCACHE:-0}" == "1" ]] && have_cmd ccache; then
         export CC="ccache clang"
     else
         export CC="clang"
@@ -212,6 +212,23 @@ link_ksu_source()
         sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "$KERNEL_DIR/drivers/Kconfig"
 }
 
+apply_ksu_local_patches()
+{
+    local selinux_hide="$KSU_REPO_DIR/kernel/feature/selinux_hide.c"
+
+    [[ -f "$selinux_hide" ]] || {
+        err "KernelSU selinux_hide.c not found"
+        exit 1
+    }
+
+    if grep -q "#if defined(CONFIG_KPROBES)" "$selinux_hide"; then
+        msg "Patching KernelSU selinux_hide for Manual hook mode"
+        sed -i 's/#if defined(CONFIG_KPROBES)/#if defined(KSU_KPROBES_HOOK)/g' "$selinux_hide"
+    else
+        msg "KernelSU selinux_hide Manual hook patch already applied"
+    fi
+}
+
 sync_ksu_legacy()
 {
     local stashed=0
@@ -219,6 +236,7 @@ sync_ksu_legacy()
     if [[ "$KSU_AUTO_SYNC" != "1" ]]; then
         warn "KernelSU-Next auto-sync disabled by KSU_AUTO_SYNC=$KSU_AUTO_SYNC"
         link_ksu_source
+        apply_ksu_local_patches
         patch_ksu_config
         return
     fi
@@ -251,6 +269,7 @@ sync_ksu_legacy()
     fi
 
     link_ksu_source
+    apply_ksu_local_patches
     patch_ksu_config
 
     msg "KernelSU-Next source synced at $(git -C "$KSU_REPO_DIR" rev-parse --short HEAD)"
