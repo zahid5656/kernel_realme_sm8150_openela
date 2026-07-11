@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: samurai-openela-357-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -31,8 +31,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          submodules: recursive
+          fetch-depth: 1
 
       - name: Set timezone
         run: sudo timedatectl set-timezone Asia/Dhaka
