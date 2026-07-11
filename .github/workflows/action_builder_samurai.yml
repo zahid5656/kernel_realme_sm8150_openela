@@ -1,8 +1,16 @@
-name: Build Samurai OpenELA Kernel
+name: Build Samurai OpenELA 4.14.357
 
 on:
   workflow_dispatch:
+    inputs:
+      ksu_ref:
+        description: KernelSU-Next branch, tag, or commit
+        required: true
+        default: legacy
   push:
+    branches:
+      - openela-357-ksunext-gki-legacy
+  pull_request:
     branches:
       - los23-test
 
@@ -10,12 +18,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: samurai-los23-test-${{ github.ref }}
+  group: samurai-openela-357-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
-    name: Realme X2 Pro - latest KernelSU-Next legacy
+    name: Built-in KernelSU-Next legacy
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
@@ -55,40 +63,58 @@ jobs:
             zip \
             zlib1g-dev
 
-      - name: Restore clang cache
+      - name: Restore toolchain cache
         uses: actions/cache@v4
         with:
           path: toolchains/clang-r547379
-          key: ${{ runner.os }}-clang-r547379-v1
+          key: ${{ runner.os }}-clang-r547379-v2
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-samurai-ccache-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-samurai-ccache-${{ github.ref_name }}-
+            ${{ runner.os }}-samurai-ccache-
 
       - name: Prepare build script
         run: |
           sed -i 's/\r$//' build_script.sh
           chmod +x build_script.sh
+          chmod +x scripts/kconfig/merge_config.sh
 
       - name: Build kernel
         id: build
+        env:
+          KSU_REF: ${{ github.event.inputs.ksu_ref || 'legacy' }}
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: ./build_script.sh
 
-      - name: Verify build outputs
+      - name: Verify outputs
         run: |
           test -s "${{ steps.build.outputs.zip_path }}"
           test -s "${{ steps.build.outputs.build_log }}"
           test -s "${{ steps.build.outputs.build_info }}"
           unzip -t "${{ steps.build.outputs.zip_path }}"
+          grep -q "Integration: built-in" "${{ steps.build.outputs.build_info }}"
+          grep -q "Hook mode: Kprobes" "${{ steps.build.outputs.build_info }}"
+          grep -q "Kernel version spoof: disabled" "${{ steps.build.outputs.build_info }}"
 
-      - name: Upload build log
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: samurai-build-log-${{ github.run_number }}
+          name: samurai-build-diagnostics-${{ github.run_number }}
           path: |
             build.log
             build-info.txt
+            out/.config
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Upload kernel ZIP artifact
+      - name: Upload kernel ZIP
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.zip_name }}
@@ -96,15 +122,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Generate release tag
+      - name: Generate release metadata
+        if: success() && github.event_name != 'pull_request'
         id: release
         run: |
           TIMESTAMP="$(date +'%Y%m%d-%H%M%S')"
-          TAG="samurai-los23-test-${GITHUB_RUN_NUMBER}-${TIMESTAMP}"
+          TAG="samurai-4.14.357-${GITHUB_RUN_NUMBER}-${TIMESTAMP}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "name=Samurai OpenELA 4.14.357 - $TIMESTAMP" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
+        if: success() && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
@@ -112,12 +140,14 @@ jobs:
           name: ${{ steps.release.outputs.name }}
           body: |
             Device: Realme X2 Pro (samurai / RMX1931)
-            Source branch: los23-test
             Kernel: OpenELA 4.14.357
-            KernelSU-Next branch: legacy
+            KernelSU-Next ref: ${{ github.event.inputs.ksu_ref || 'legacy' }}
             KernelSU-Next revision: ${{ steps.build.outputs.ksu_describe }}
             KernelSU-Next commit: ${{ steps.build.outputs.ksu_commit }}
+            Integration: built-in legacy
             Hook mode: Kprobes
+            Kernel version spoof: disabled
+            Source branch: ${{ github.ref_name }}
             Source commit: ${{ github.sha }}
           files: |
             ${{ steps.build.outputs.zip_path }}
