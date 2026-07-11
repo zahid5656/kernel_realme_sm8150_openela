@@ -154,9 +154,79 @@ build_kernel() {
     [[ -s "$OUT/vmlinux" ]] || die "vmlinux was not generated"
     [[ -s "$OUT/arch/arm64/boot/Image.gz-dtb" ]] || die "Image.gz-dtb was not generated"
 
-    if command -v llvm-nm >/dev/null; then
-        llvm-nm "$OUT/vmlinux" | grep -q ' ksu_input_hook$' || die "ksu_input_hook is absent from vmlinux"
+    grep -q ' ksu_input_hook
+
+    if command -v ccache >/dev/null; then
+        ccache --show-stats || true
     fi
+}
+
+package_kernel() {
+    local stamp zip_name zip_path
+    stamp="$(date +'%Y%m%d-%H%M')"
+    zip_name="Samurai-OpenELA-${KERNEL_VERSION}-KSUNext-v3.2.0-legacy-${stamp}.zip"
+    zip_path="$ROOT/$zip_name"
+
+    rm -rf "$AK3_DIR"
+    git clone --depth=1 --branch "$AK3_BRANCH" "$AK3_REPO" "$AK3_DIR"
+    rm -rf "$AK3_DIR/.git"
+
+    cp -f "$OUT/arch/arm64/boot/Image.gz-dtb" "$AK3_DIR/Image.gz-dtb"
+    if [[ -s "$OUT/arch/arm64/boot/dtbo.img" ]]; then
+        cp -f "$OUT/arch/arm64/boot/dtbo.img" "$AK3_DIR/dtbo.img"
+    else
+        warn "dtbo.img was not generated; ZIP contains Image.gz-dtb only"
+    fi
+
+    rm -f "$zip_path"
+    (cd "$AK3_DIR" && zip -r9 "$zip_path" .)
+    unzip -t "$zip_path"
+
+    cat > "$INFO" <<INFOEOF
+Device: Realme X2 Pro (samurai / RMX1931)
+Kernel: $KERNEL_VERSION-openela
+Source branch: ${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-local}}
+Source commit: ${GITHUB_SHA:-$(git rev-parse HEAD)}
+KernelSU-Next baseline: pinned legacy v3.2.0
+KernelSU-Next commit: $KSU_COMMIT
+Integration: built-in legacy
+GKI mode: built-in GKI legacy
+Hook backend: selective syscall tracepoint and kretprobe
+Hook mode: Kprobes
+KSU input-hook synchronization fix: applied
+Kernel version spoof: disabled
+Android BPF override: device tree ro.bpf.kver_override=5.10.239
+Toolchain: clang-r547379
+Kernel image: Image.gz-dtb
+DTBO: $([[ -s "$OUT/arch/arm64/boot/dtbo.img" ]] && echo included || echo not-generated)
+Performance configuration: original Samurai baseline preserved
+Kernel ZIP: $zip_name
+INFOEOF
+
+    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+        {
+            echo "zip_name=$zip_name"
+            echo "zip_path=$zip_path"
+            echo "build_log=$LOG"
+            echo "build_info=$INFO"
+        } >> "$GITHUB_OUTPUT"
+    fi
+
+    info "Build artifact: $zip_path"
+}
+
+main() {
+    verify_source
+    setup_toolchain
+    prepare_ksu
+    prepare_config
+    build_kernel
+    package_kernel
+    info "Samurai kernel build completed successfully"
+}
+
+main "$@"
+ "$OUT/System.map" || die "ksu_input_hook is absent from System.map"
 
     if command -v ccache >/dev/null; then
         ccache --show-stats || true
