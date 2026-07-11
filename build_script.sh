@@ -14,12 +14,12 @@ BUILD_LOG="$KERNEL_DIR/build.log"
 BUILD_INFO="$KERNEL_DIR/build-info.txt"
 
 CONFIG_FILE="samurai_defconfig"
-KSU_CONFIG_FRAGMENT="$KERNEL_DIR/arch/arm64/configs/ksunext_v32_legacy.config"
+KSU_CONFIG_FRAGMENT="$KERNEL_DIR/arch/arm64/configs/ksunext_legacy.config"
 EXPECTED_KERNEL_VERSION="4.14.357"
 KERNEL_NAME="samurai-${EXPECTED_KERNEL_VERSION}"
 
 KSU_REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"
-KSU_COMMIT_PIN="551ad80473f60e052917aec08abf5323b6ab2f7c"
+KSU_COMMIT_PIN="fd093e8b879063aeb0192a3959b0652101ded623"
 
 ANYKERNEL_REPO="https://github.com/nayem8854/AnyKernel3.git"
 ANYKERNEL_BRANCH="rmx1931"
@@ -157,8 +157,8 @@ remove_previous_ksu_integration() {
     rm -rf "$KSU_DIR"
 }
 
-sync_ksunext_v32() {
-    info "Synchronizing pinned KernelSU-Next v3.2 baseline"
+sync_ksunext_legacy() {
+    info "Synchronizing pinned KernelSU-Next legacy source"
 
     remove_previous_ksu_integration
 
@@ -172,14 +172,19 @@ sync_ksunext_v32() {
 
     [[ -f "$KSU_DIR/kernel/Kconfig" ]] || fail "KernelSU-Next kernel/Kconfig is missing"
     [[ -f "$KSU_DIR/kernel/Kbuild" ]] || fail "KernelSU-Next kernel/Kbuild is missing"
+    grep -q '^config KSU_KPROBES_HOOK' "$KSU_DIR/kernel/Kconfig" || \
+        fail "Pinned KernelSU source does not provide the legacy Kprobes hook option"
+    grep -q 'CONFIG_KSU_KPROBES_HOOK' "$KSU_DIR/kernel/Kbuild" || \
+        fail "Pinned KernelSU source does not provide the legacy Kprobes build path"
 
     ln -sfn ../KernelSU-Next/kernel "$KERNEL_DIR/drivers/kernelsu"
     printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> "$KERNEL_DIR/drivers/Makefile"
-    printf '\nsource "drivers/kernelsu/Kconfig"\n' >> "$KERNEL_DIR/drivers/Kconfig"
+    sed -i '/^endmenu$/i source "drivers/kernelsu/Kconfig"\n' \
+        "$KERNEL_DIR/drivers/Kconfig"
 
     KSU_COMMIT="$(git -C "$KSU_DIR" rev-parse HEAD)"
     KSU_SHORT="$(git -C "$KSU_DIR" rev-parse --short=12 HEAD)"
-    KSU_DESCRIBE="$(git -C "$KSU_DIR" describe --tags --always 2>/dev/null || printf 'v3.2-pinned-%s' "$KSU_SHORT")"
+    KSU_DESCRIBE="$(git -C "$KSU_DIR" describe --tags --always 2>/dev/null || printf 'legacy-%s' "$KSU_SHORT")"
     export KSU_COMMIT KSU_SHORT KSU_DESCRIBE
 
     [[ "$KSU_COMMIT" == "$KSU_COMMIT_PIN" ]] || \
@@ -205,7 +210,7 @@ generate_config() {
     info "Generating $CONFIG_FILE"
     make O="$OUT_DIR" ARCH=arm64 "$CONFIG_FILE"
 
-    info "Merging built-in KernelSU-Next v3.2 legacy configuration"
+    info "Merging built-in KernelSU-Next legacy configuration"
     "$KERNEL_DIR/scripts/kconfig/merge_config.sh" \
         -m \
         -O "$OUT_DIR" \
@@ -217,12 +222,21 @@ generate_config() {
     grep -qx 'CONFIG_KSU=y' "$OUT_DIR/.config" || fail "CONFIG_KSU is not built-in"
     grep -qx 'CONFIG_KPROBES=y' "$OUT_DIR/.config" || fail "CONFIG_KPROBES is not enabled"
     grep -qx 'CONFIG_KRETPROBES=y' "$OUT_DIR/.config" || fail "CONFIG_KRETPROBES is not enabled"
+    grep -qx 'CONFIG_HAVE_SYSCALL_TRACEPOINTS=y' "$OUT_DIR/.config" || \
+        fail "CONFIG_HAVE_SYSCALL_TRACEPOINTS is unavailable"
+    grep -qx 'CONFIG_KSU_KPROBES_HOOK=y' "$OUT_DIR/.config" || \
+        fail "CONFIG_KSU_KPROBES_HOOK is not enabled"
+    grep -qx 'CONFIG_KSU_ALLOWLIST_WORKAROUND=y' "$OUT_DIR/.config" || \
+        fail "CONFIG_KSU_ALLOWLIST_WORKAROUND is not enabled"
 
+    if grep -qx 'CONFIG_KSU_MANUAL_HOOK=y' "$OUT_DIR/.config"; then
+        fail "CONFIG_KSU_MANUAL_HOOK was enabled unexpectedly"
+    fi
     if grep -qx 'CONFIG_KSU_DEBUG=y' "$OUT_DIR/.config"; then
         fail "CONFIG_KSU_DEBUG was enabled unexpectedly"
     fi
 
-    info "Verified KernelSU-Next mode: built-in v3.2 legacy"
+    info "Verified KernelSU-Next mode: built-in legacy with selective Kprobes hooks"
 }
 
 compile_kernel() {
@@ -257,7 +271,7 @@ package_kernel() {
         fail "Missing Image.gz-dtb and Image.gz"
     fi
 
-    zip_name="${KERNEL_NAME}-$(date +'%d%m%Y-%H%M')-KSU-Next-v3.2-${KSU_SHORT}.zip"
+    zip_name="${KERNEL_NAME}-$(date +'%d%m%Y-%H%M')-KSU-Next-legacy-${KSU_SHORT}.zip"
     output_zip="$KERNEL_DIR/$zip_name"
 
     info "Cloning AnyKernel3 rmx1931 branch"
@@ -291,15 +305,17 @@ package_kernel() {
     printf '%s\n' \
         "Device: Realme X2 Pro (samurai / RMX1931)" \
         "Kernel: $EXPECTED_KERNEL_VERSION" \
-        "Source branch: ${GITHUB_REF_NAME:-local}" \
+        "Source branch: ${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-local}}" \
         "Source commit: ${GITHUB_SHA:-$(git rev-parse HEAD)}" \
-        "KernelSU-Next baseline: pinned v3.2" \
+        "KernelSU-Next baseline: pinned legacy" \
         "KernelSU-Next revision: $KSU_DESCRIBE" \
         "KernelSU-Next commit: $KSU_COMMIT" \
         "Integration: built-in legacy" \
-        "Hook backend: KernelSU-Next v3.2 Kprobes" \
+        "Hook backend: selective syscall tracepoint and kretprobe" \
+        "Manual hooks: disabled" \
         "Kernel version spoof: disabled" \
         "Android BPF override: supplied by device tree (5.10.239)" \
+        "Toolchain: clang-r547379" \
         "Optimization baseline: unchanged" \
         "Kernel ZIP: $zip_name" \
         > "$BUILD_INFO"
@@ -334,7 +350,7 @@ main() {
     clean_output
     download_clang
     setup_environment
-    sync_ksunext_v32
+    sync_ksunext_legacy
     generate_config
     compile_kernel
     package_kernel
