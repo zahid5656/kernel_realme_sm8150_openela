@@ -9,7 +9,7 @@ on:
         default: legacy
   push:
     branches:
-      - openela-357-ksunext-gki-legacy
+      - los23-test
   pull_request:
     branches:
       - los23-test
@@ -18,7 +18,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: samurai-openela-357-${{ github.workflow }}-${{ github.ref }}
+  group: samurai-openela-357-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
