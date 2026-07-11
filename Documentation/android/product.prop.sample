@@ -1,0 +1,5 @@
+# Drop into device product.prop (or system.prop) for LineageOS 23.2
+# Matches official oneplus/sm8150-common lineage-23.2 product.prop
+
+# eBPF — kernel must provide 5.10-level features (ringbuf, etc.)
+ro.bpf.kver_override=5.10.239
