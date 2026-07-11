@@ -77,8 +77,9 @@ jobs:
             ${{ runner.os }}-samurai-ccache-${{ github.ref_name }}-
             ${{ runner.os }}-samurai-ccache-
 
-      - name: Prepare build script
+      - name: Prepare build environment
         run: |
+          sudo ln -sf "$(command -v python3)" /usr/local/bin/python2
           sed -i 's/\r$//' build_script.sh
           chmod +x build_script.sh
           chmod +x scripts/kconfig/merge_config.sh
