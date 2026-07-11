@@ -187,12 +187,14 @@ package_kernel() {
     cat > "$INFO" <<INFOEOF
 Device: Realme X2 Pro (samurai / RMX1931)
 Kernel: $KERNEL_VERSION-openela
-Source branch: ${GITHUB_REF_NAME:-local}
+Source branch: ${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-local}}
 Source commit: ${GITHUB_SHA:-$(git rev-parse HEAD)}
-KernelSU-Next tag: v3.2.0-legacy
+KernelSU-Next baseline: pinned legacy v3.2.0
 KernelSU-Next commit: $KSU_COMMIT
-Integration: built-in GKI legacy
-Hook backend: Kprobes
+Integration: built-in legacy
+GKI mode: built-in GKI legacy
+Hook backend: selective syscall tracepoint and kretprobe
+Hook mode: Kprobes
 KSU input-hook synchronization fix: applied
 Kernel version spoof: disabled
 Android BPF override: device tree ro.bpf.kver_override=5.10.239
