@@ -64,7 +64,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: ${{ runner.os }}-samurai-r547379-${{ hashFiles('arch/arm64/configs/samurai_defconfig', 'arch/arm64/configs/ksunext_v32_legacy.config', 'build_script.sh') }}
+          key: ${{ runner.os }}-samurai-r547379-${{ hashFiles('arch/arm64/configs/samurai_defconfig', 'arch/arm64/configs/ksunext_legacy.config', 'build_script.sh') }}
           restore-keys: |
             ${{ runner.os }}-samurai-r547379-
 
@@ -98,7 +98,9 @@ jobs:
           unzip -t "${{ steps.build.outputs.zip_path }}"
           grep -q "Kernel: 4.14.357" "${{ steps.build.outputs.build_info }}"
           grep -q "Integration: built-in legacy" "${{ steps.build.outputs.build_info }}"
-          grep -q "KernelSU-Next baseline: pinned v3.2" "${{ steps.build.outputs.build_info }}"
+          grep -q "KernelSU-Next baseline: pinned legacy" "${{ steps.build.outputs.build_info }}"
+          grep -q "Hook backend: selective syscall tracepoint and kretprobe" "${{ steps.build.outputs.build_info }}"
+          grep -q "Toolchain: clang-r547379" "${{ steps.build.outputs.build_info }}"
 
       - name: Upload diagnostics
         if: always()
@@ -109,6 +111,7 @@ jobs:
             build.log
             build-info.txt
             out/.config
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
 
