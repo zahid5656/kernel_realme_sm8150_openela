@@ -79,10 +79,18 @@ jobs:
 
       - name: Prepare build environment
         run: |
-          sudo ln -sf "$(command -v python3)" /usr/local/bin/python2
           sed -i 's/\r$//' build_script.sh
           chmod +x build_script.sh
           chmod +x scripts/kconfig/merge_config.sh
+          sed -i 's/^cmd_mkdtimg = python2 /cmd_mkdtimg = python3 /' scripts/Makefile.lib
+          sed -i \
+            -e "s/array('c', ' ' \* self.__metadata_size)/array('b', b' ' * self.__metadata_size)/" \
+            -e 's/xrange(/range(/g' \
+            -e 's/dt_entry_buf = ""/dt_entry_buf = b""/' \
+            -e 's/self.dt_entries_offset \/ 4/self.dt_entries_offset \/\/ 4/' \
+            -e 's/(self.dt_entries_offset - self._DT_TABLE_HEADER_SIZE) \/ 4/(self.dt_entries_offset - self._DT_TABLE_HEADER_SIZE) \/\/ 4/' \
+            scripts/dtc/libfdt/mkdtboimg.py
+          python3 -m py_compile scripts/dtc/libfdt/mkdtboimg.py
 
       - name: Build kernel
         id: build
