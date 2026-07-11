@@ -36,7 +36,7 @@ diff --git a/kernel/runtime/ksud_integration.c b/kernel/runtime/ksud_integration
  bool ksu_execveat_hook __read_mostly = true;
  #endif
  
-@@ -696,6 +696,7 @@ static void do_stop_input_hook(struct work_struct *work)
+@@ -696,5 +696,6 @@ static void do_stop_input_hook(struct work_struct *work)
  {
  	unregister_kprobe(&input_event_kp);
 +	WRITE_ONCE(ksu_input_hook, false);
