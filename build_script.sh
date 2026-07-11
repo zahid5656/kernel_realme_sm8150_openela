@@ -8,19 +8,23 @@ cd "$KERNEL_DIR"
 OUT_DIR="$KERNEL_DIR/out"
 TC_DIR="$KERNEL_DIR/toolchains"
 CLANG_DIR="$TC_DIR/clang-r547379"
+KSU_DIR="$KERNEL_DIR/KernelSU-Next"
 ANYKERNEL_DIR="$KERNEL_DIR/AnyKernel3"
-BUILD_LOG="$KERNEL_DIR/build.log"
 
 CONFIG_FILE="samurai_defconfig"
-DEFCONFIG_FILE="$KERNEL_DIR/arch/arm64/configs/$CONFIG_FILE"
+KSU_CONFIG_FRAGMENT="$KERNEL_DIR/arch/arm64/configs/ksunext_legacy.config"
 
 KERNEL_NAME="samurai-4.14.357"
-KSU_BRANCH="legacy"
-KSU_SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh"
-KSU_DIR="$KERNEL_DIR/KernelSU-Next"
+EXPECTED_KERNEL_VERSION="4.14.357"
+
+KSU_REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"
+KSU_REF="${KSU_REF:-legacy}"
 
 ANYKERNEL_REPO="https://github.com/nayem8854/AnyKernel3.git"
 ANYKERNEL_BRANCH="rmx1931"
+
+BUILD_LOG="$KERNEL_DIR/build.log"
+BUILD_INFO="$KERNEL_DIR/build-info.txt"
 
 export ARCH=arm64
 export SUBARCH=arm64
@@ -104,18 +108,21 @@ download_clang() {
         https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
         "$CLANG_DIR"
 
-    [[ -x "$CLANG_DIR/bin/clang" ]] || fail "clang was not downloaded correctly"
+    [[ -x "$CLANG_DIR/bin/clang" ]] || fail "clang-r547379 was not downloaded correctly"
 }
 
 setup_environment() {
     export PATH="$CLANG_DIR/bin:$PATH"
 
     command -v clang >/dev/null 2>&1 || fail "clang is unavailable"
+    command -v ld.lld >/dev/null 2>&1 || fail "ld.lld is unavailable"
 
     if command -v ccache >/dev/null 2>&1; then
         export CC="ccache clang"
+        export CCACHE_DIR="${CCACHE_DIR:-$KERNEL_DIR/.ccache}"
         ccache --set-config=compiler_check=content >/dev/null 2>&1 || true
         ccache --set-config=max_size=5G >/dev/null 2>&1 || true
+        ccache --zero-stats >/dev/null 2>&1 || true
     else
         export CC="clang"
     fi
@@ -124,93 +131,104 @@ setup_environment() {
     clang --version | head -n 1
 }
 
-set_config() {
-    local symbol="$1"
-    local value="$2"
+verify_kernel_version() {
+    local version
 
-    sed -i \
-        -e "/^${symbol}=.*/d" \
-        -e "/^# ${symbol} is not set$/d" \
-        "$DEFCONFIG_FILE"
+    version="$(make -s kernelversion)"
+    [[ "$version" == "$EXPECTED_KERNEL_VERSION" ]] || \
+        fail "Expected kernel $EXPECTED_KERNEL_VERSION, found $version"
 
-    printf '%s=%s\n' "$symbol" "$value" >> "$DEFCONFIG_FILE"
+    info "Verified kernel version: $version"
 }
 
-disable_config() {
-    local symbol="$1"
+remove_previous_ksu_integration() {
+    if [[ -L "$KERNEL_DIR/drivers/kernelsu" ]]; then
+        rm -f "$KERNEL_DIR/drivers/kernelsu"
+    elif [[ -e "$KERNEL_DIR/drivers/kernelsu" ]]; then
+        rm -rf "$KERNEL_DIR/drivers/kernelsu"
+    fi
 
-    sed -i \
-        -e "/^${symbol}=.*/d" \
-        -e "/^# ${symbol} is not set$/d" \
-        "$DEFCONFIG_FILE"
+    sed -i '/obj-\$(CONFIG_KSU)[[:space:]]*+=[[:space:]]*kernelsu\//d' \
+        "$KERNEL_DIR/drivers/Makefile"
 
-    printf '# %s is not set\n' "$symbol" >> "$DEFCONFIG_FILE"
+    sed -i '/source "drivers\/kernelsu\/Kconfig"/d' \
+        "$KERNEL_DIR/drivers/Kconfig"
+
+    rm -rf "$KSU_DIR"
 }
 
-install_latest_ksunext_legacy() {
-    local setup_script
-    setup_script="$(mktemp)"
+sync_ksunext() {
+    info "Synchronizing KernelSU-Next ref: $KSU_REF"
 
-    [[ -f "$DEFCONFIG_FILE" ]] || fail "Missing defconfig: $DEFCONFIG_FILE"
+    remove_previous_ksu_integration
 
-    info "Downloading official KernelSU-Next legacy setup script"
-    curl -fLSs "$KSU_SETUP_URL" -o "$setup_script"
-    chmod +x "$setup_script"
+    mkdir -p "$KSU_DIR"
+    git -C "$KSU_DIR" init
+    git -C "$KSU_DIR" remote add origin "$KSU_REPO"
+    git -C "$KSU_DIR" fetch --depth=1 origin "$KSU_REF"
+    git -C "$KSU_DIR" checkout --detach FETCH_HEAD
 
-    info "Removing previous KernelSU-Next integration"
-    bash "$setup_script" --cleanup || true
+    git -C "$KSU_DIR" submodule sync --recursive
+    git -C "$KSU_DIR" submodule update --init --recursive
 
-    info "Installing latest KernelSU-Next legacy branch"
-    bash "$setup_script" "$KSU_BRANCH"
-    rm -f "$setup_script"
+    [[ -f "$KSU_DIR/kernel/Kconfig" ]] || fail "KernelSU-Next kernel/Kconfig is missing"
+    [[ -f "$KSU_DIR/kernel/Kbuild" ]] || fail "KernelSU-Next kernel/Kbuild is missing"
 
-    [[ -d "$KSU_DIR/.git" ]] || fail "KernelSU-Next repository was not installed"
+    ln -sfn ../KernelSU-Next/kernel "$KERNEL_DIR/drivers/kernelsu"
+
+    printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> "$KERNEL_DIR/drivers/Makefile"
+    sed -i '/^endmenu$/i source "drivers/kernelsu/Kconfig"\n' "$KERNEL_DIR/drivers/Kconfig"
 
     KSU_COMMIT="$(git -C "$KSU_DIR" rev-parse HEAD)"
     KSU_SHORT="$(git -C "$KSU_DIR" rev-parse --short=12 HEAD)"
-    KSU_DESCRIBE="$(git -C "$KSU_DIR" describe --tags --always 2>/dev/null || echo legacy-$KSU_SHORT)"
+    KSU_DESCRIBE="$(git -C "$KSU_DIR" describe --tags --always 2>/dev/null || printf 'legacy-%s' "$KSU_SHORT")"
+
     export KSU_COMMIT KSU_SHORT KSU_DESCRIBE
 
-    info "KernelSU-Next branch: $KSU_BRANCH"
-    info "KernelSU-Next revision: $KSU_DESCRIBE ($KSU_SHORT)"
-
-    sed -i \
-        -e '/^CONFIG_KSU_KPROBE_HOOKS=.*/d' \
-        -e '/^# CONFIG_KSU_KPROBE_HOOKS is not set$/d' \
-        -e '/^CONFIG_KSU_KPROBE_HOOK=.*/d' \
-        -e '/^# CONFIG_KSU_KPROBE_HOOK is not set$/d' \
-        "$DEFCONFIG_FILE"
-
-    set_config CONFIG_KPROBES y
-    set_config CONFIG_KRETPROBES y
-    set_config CONFIG_KPROBE_EVENTS y
-    set_config CONFIG_KSU y
-    disable_config CONFIG_KSU_MANUAL_HOOK
-    set_config CONFIG_KSU_KPROBES_HOOK y
+    info "KernelSU-Next revision: $KSU_DESCRIBE"
+    info "KernelSU-Next commit: $KSU_COMMIT"
 }
 
 clean_output() {
-    info "Cleaning previous output"
-    rm -rf "$OUT_DIR"
-    rm -f "$KERNEL_DIR"/*.zip
+    info "Cleaning build output"
+    rm -rf "$OUT_DIR" "$ANYKERNEL_DIR"
+    rm -f "$BUILD_INFO"
+    find "$KERNEL_DIR" -maxdepth 1 -type f -name 'samurai-4.14.357-*.zip' -delete
 }
 
 generate_config() {
+    [[ -f "$KSU_CONFIG_FRAGMENT" ]] || \
+        fail "Missing KSU config fragment: $KSU_CONFIG_FRAGMENT"
+
     info "Generating $CONFIG_FILE"
+    make O="$OUT_DIR" ARCH=arm64 "$CONFIG_FILE"
 
-    make \
-        O="$OUT_DIR" \
-        ARCH=arm64 \
-        "$CONFIG_FILE"
+    info "Merging built-in KernelSU-Next legacy configuration"
+    "$KERNEL_DIR/scripts/kconfig/merge_config.sh" \
+        -m \
+        -O "$OUT_DIR" \
+        "$OUT_DIR/.config" \
+        "$KSU_CONFIG_FRAGMENT"
 
-    grep -qx 'CONFIG_KSU=y' "$OUT_DIR/.config" || fail "CONFIG_KSU is not enabled"
-    grep -qx 'CONFIG_KPROBES=y' "$OUT_DIR/.config" || fail "CONFIG_KPROBES is not enabled"
-    grep -qx 'CONFIG_KRETPROBES=y' "$OUT_DIR/.config" || fail "CONFIG_KRETPROBES is not enabled"
-    grep -qx 'CONFIG_KSU_KPROBES_HOOK=y' "$OUT_DIR/.config" || fail "KernelSU Kprobes hook mode is not enabled"
+    make O="$OUT_DIR" ARCH=arm64 olddefconfig
+
+    grep -qx 'CONFIG_KSU=y' "$OUT_DIR/.config" || \
+        fail "CONFIG_KSU is not built-in"
+
+    grep -qx 'CONFIG_KPROBES=y' "$OUT_DIR/.config" || \
+        fail "CONFIG_KPROBES is not enabled"
+
+    grep -qx 'CONFIG_KRETPROBES=y' "$OUT_DIR/.config" || \
+        fail "CONFIG_KRETPROBES is not enabled"
+
+    grep -qx 'CONFIG_KSU_KPROBES_HOOK=y' "$OUT_DIR/.config" || \
+        fail "CONFIG_KSU_KPROBES_HOOK is not enabled"
 
     if grep -qx 'CONFIG_KSU_MANUAL_HOOK=y' "$OUT_DIR/.config"; then
         fail "Manual hook mode was enabled unexpectedly"
     fi
+
+    info "Verified KernelSU-Next mode: built-in legacy with Kprobes"
 }
 
 compile_kernel() {
@@ -222,9 +240,19 @@ compile_kernel() {
         CC="$CC" \
         LLVM=1 \
         LLVM_IAS=1 \
+        LD=ld.lld \
+        AR=llvm-ar \
+        NM=llvm-nm \
+        OBJCOPY=llvm-objcopy \
+        OBJDUMP=llvm-objdump \
+        STRIP=llvm-strip \
         CLANG_TRIPLE=aarch64-linux-gnu- \
         CROSS_COMPILE=aarch64-linux-gnu- \
         CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+    if command -v ccache >/dev/null 2>&1; then
+        ccache --show-stats || true
+    fi
 }
 
 package_kernel() {
@@ -241,11 +269,11 @@ package_kernel() {
         fail "Missing Image.gz-dtb and Image.gz"
     fi
 
-    zip_name="${KERNEL_NAME}-$(date +'%d%m%Y-%H%M')-KSU-Next-legacy-${KSU_SHORT}.zip"
+    zip_name="${KERNEL_NAME}-$(date +'%d%m%Y-%H%M')-KSU-Next-${KSU_DESCRIBE}-${KSU_SHORT}.zip"
+    zip_name="${zip_name//\//-}"
     output_zip="$KERNEL_DIR/$zip_name"
 
     info "Cloning AnyKernel3 rmx1931 branch"
-    rm -rf "$ANYKERNEL_DIR"
     git clone --depth=1 \
         --branch "$ANYKERNEL_BRANCH" \
         "$ANYKERNEL_REPO" \
@@ -256,7 +284,7 @@ package_kernel() {
     if [[ -s "$compiled_dtbo" ]]; then
         cp -f "$compiled_dtbo" "$ANYKERNEL_DIR/"
     else
-        warn "dtbo.img was not generated; preserving the original optional-dtbo packaging behavior"
+        warn "dtbo.img was not generated; packaging kernel image only"
     fi
 
     rm -rf "$ANYKERNEL_DIR/.git"
@@ -269,28 +297,35 @@ package_kernel() {
     )
 
     rm -rf "$ANYKERNEL_DIR"
+
     [[ -s "$output_zip" ]] || fail "Kernel ZIP was not created"
+    unzip -t "$output_zip"
 
     printf '%s\n' \
         "Device: Realme X2 Pro (samurai / RMX1931)" \
-        "Kernel: $KERNEL_NAME" \
+        "Kernel: $EXPECTED_KERNEL_VERSION" \
         "Source branch: ${GITHUB_REF_NAME:-local}" \
-        "KernelSU-Next branch: $KSU_BRANCH" \
+        "Source commit: ${GITHUB_SHA:-$(git rev-parse HEAD)}" \
+        "KernelSU-Next ref: $KSU_REF" \
         "KernelSU-Next revision: $KSU_DESCRIBE" \
         "KernelSU-Next commit: $KSU_COMMIT" \
+        "Integration: built-in" \
         "Hook mode: Kprobes" \
+        "Kernel version spoof: disabled" \
+        "Optimization: O2, clang-r547379, schedutil baseline" \
         "Kernel ZIP: $zip_name" \
-        > "$KERNEL_DIR/build-info.txt"
+        > "$BUILD_INFO"
 
     info "Kernel ZIP: $output_zip"
     info "Build log: $BUILD_LOG"
+    info "Build information: $BUILD_INFO"
 
     if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
         {
             echo "zip_path=$output_zip"
             echo "zip_name=$zip_name"
             echo "build_log=$BUILD_LOG"
-            echo "build_info=$KERNEL_DIR/build-info.txt"
+            echo "build_info=$BUILD_INFO"
             echo "ksu_commit=$KSU_COMMIT"
             echo "ksu_short=$KSU_SHORT"
             echo "ksu_describe=$KSU_DESCRIBE"
@@ -300,22 +335,25 @@ package_kernel() {
 
 main() {
     local start end elapsed
+
     start="$(date +%s)"
 
     if [[ "${INSTALL_DEPS:-0}" == "1" ]]; then
         install_dependencies
     fi
 
+    verify_kernel_version
     clean_output
     download_clang
     setup_environment
-    install_latest_ksunext_legacy
+    sync_ksunext
     generate_config
     compile_kernel
     package_kernel
 
     end="$(date +%s)"
     elapsed=$((end - start))
+
     info "Build completed in ${elapsed} seconds"
 }
 
