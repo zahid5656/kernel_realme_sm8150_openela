@@ -1,0 +1,141 @@
+name: Build Samurai OpenELA 4.14.357 KSU Next v3.2.0
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - samurai-4.14.357-ksunext-v320-legacy
+    paths:
+      - 'arch/arm64/configs/samurai_defconfig'
+      - 'arch/arm64/configs/ksunext_v320_legacy.config'
+      - 'patches/ksunext/**'
+      - 'build_samurai_v320.sh'
+      - '.github/workflows/samurai-v320.yml'
+      - 'Makefile'
+      - 'drivers/**'
+      - 'fs/**'
+      - 'kernel/**'
+      - 'security/**'
+      - 'arch/arm64/**'
+      - 'scripts/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: samurai-v320-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Compile and package Samurai kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            cpio \
+            curl \
+            device-tree-compiler \
+            flex \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            python-is-python3 \
+            rsync \
+            unzip \
+            wget \
+            zip \
+            zlib1g-dev
+
+      - name: Restore clang-r547379
+        uses: actions/cache@v4
+        with:
+          path: toolchains/clang-r547379
+          key: ${{ runner.os }}-clang-r547379-v2
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-samurai-v320-r547379-${{ hashFiles('arch/arm64/configs/samurai_defconfig', 'arch/arm64/configs/ksunext_v320_legacy.config', 'patches/ksunext/0001-fix-legacy-kprobes-input-hook-state.patch', 'build_samurai_v320.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-samurai-v320-r547379-
+            ${{ runner.os }}-samurai-r547379-
+
+      - name: Prepare legacy build tools
+        run: |
+          sed -i 's/\r$//' build_samurai_v320.sh
+          chmod +x build_samurai_v320.sh scripts/kconfig/merge_config.sh
+          sed -i 's/^cmd_mkdtimg = python2 /cmd_mkdtimg = python3 /' scripts/Makefile.lib
+          sed -i \
+            -e "s/array('c', ' ' \* self.__metadata_size)/array('b', b' ' * self.__metadata_size)/" \
+            -e 's/xrange(/range(/g' \
+            -e 's/dt_entry_buf = ""/dt_entry_buf = b""/' \
+            -e 's/self.dt_entries_offset \/ 4/self.dt_entries_offset \/\/ 4/' \
+            -e 's/(self.dt_entries_offset - self._DT_TABLE_HEADER_SIZE) \/ 4/(self.dt_entries_offset - self._DT_TABLE_HEADER_SIZE) \/\/ 4/' \
+            scripts/dtc/libfdt/mkdtboimg.py
+          python3 -m py_compile scripts/dtc/libfdt/mkdtboimg.py
+          bash -n build_samurai_v320.sh
+
+      - name: Build kernel
+        id: build
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ./build_samurai_v320.sh
+
+      - name: Verify build contract
+        if: success()
+        run: |
+          test -s "${{ steps.build.outputs.zip_path }}"
+          test -s "${{ steps.build.outputs.build_log }}"
+          test -s "${{ steps.build.outputs.build_info }}"
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          test -s out/vmlinux
+          unzip -t "${{ steps.build.outputs.zip_path }}"
+          grep -q '^CONFIG_KSU=y$' out/.config
+          grep -q '^CONFIG_KSU_KPROBES_HOOK=y$' out/.config
+          grep -q '^CONFIG_KPROBES=y$' out/.config
+          grep -q '^CONFIG_KRETPROBES=y$' out/.config
+          grep -q '^Kernel: 4.14.357-openela$' "${{ steps.build.outputs.build_info }}"
+          grep -q '^Integration: built-in GKI legacy$' "${{ steps.build.outputs.build_info }}"
+          grep -q '^KSU input-hook synchronization fix: applied$' "${{ steps.build.outputs.build_info }}"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: samurai-v320-diagnostics-${{ github.run_number }}
+          path: |
+            build.log
+            build-info.txt
+            out/.config
+            out/System.map
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload flashable kernel
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.zip_name }}
+          path: ${{ steps.build.outputs.zip_path }}
+          if-no-files-found: error
+          retention-days: 30
