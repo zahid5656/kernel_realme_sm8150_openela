@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Zahidul Islam <zahid5656@gmail.com>
+Date: Sat, 11 Jul 2026 00:00:00 +0000
+Subject: [PATCH] kernelsu: fix legacy Kprobes input hook state
+
+KernelSU-Next v3.2.0-legacy commit
+fd093e8b879063aeb0192a3959b0652101ded623 declares ksu_input_hook
+from selinux_hide.c even when KSU_KPROBES_HOOK is enabled, but the symbol
+is only defined in the manual-hook branch. This reaches the final vmlinux
+link and fails with an undefined symbol.
+
+Keep the state variable available in both hook modes and clear it only
+after the input-event kprobe has actually been unregistered. This keeps
+the SELinux-hide initialization thread synchronized with the safe-mode
+input hook instead of bypassing the wait.
+---
+ kernel/runtime/ksud_integration.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/runtime/ksud_integration.c b/kernel/runtime/ksud_integration.c
+--- a/kernel/runtime/ksud_integration.c
++++ b/kernel/runtime/ksud_integration.c
+@@ -69,6 +69,7 @@ void stop_init_rc_hook();
+ void stop_execve_hook();
+ void stop_input_hook();
+ 
++bool ksu_input_hook __read_mostly = true;
+ #ifdef KSU_KPROBES_HOOK
+ static struct work_struct __maybe_unused stop_init_rc_hook_work;
+ static struct work_struct __maybe_unused stop_execve_hook_work;
+@@ -76,7 +77,6 @@ static struct work_struct __maybe_unused stop_input_hook_work;
+ #else
+ bool ksu_init_rc_hook __read_mostly = true;
+ bool __maybe_unused ksu_vfs_read_hook = true;
+-bool ksu_input_hook __read_mostly = true;
+ bool ksu_execveat_hook __read_mostly = true;
+ #endif
+ 
+@@ -696,6 +696,7 @@ static void do_stop_input_hook(struct work_struct *work)
+ {
+ 	unregister_kprobe(&input_event_kp);
++	WRITE_ONCE(ksu_input_hook, false);
+ }
+ #else
+ static int ksu_execve_ksud_common(const char __user *filename_user,
+-- 
+2.47.2
