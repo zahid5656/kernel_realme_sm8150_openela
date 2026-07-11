@@ -132,9 +132,13 @@ setup_environment() {
 }
 
 verify_kernel_version() {
-    local version
+    local major patchlevel sublevel version
 
-    version="$(make -s kernelversion)"
+    major="$(awk '$1 == "VERSION" && $2 == "=" { print $3; exit }' Makefile)"
+    patchlevel="$(awk '$1 == "PATCHLEVEL" && $2 == "=" { print $3; exit }' Makefile)"
+    sublevel="$(awk '$1 == "SUBLEVEL" && $2 == "=" { print $3; exit }' Makefile)"
+    version="${major}.${patchlevel}.${sublevel}"
+
     [[ "$version" == "$EXPECTED_KERNEL_VERSION" ]] || \
         fail "Expected kernel $EXPECTED_KERNEL_VERSION, found $version"
 
