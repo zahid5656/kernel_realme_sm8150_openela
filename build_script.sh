@@ -2,4 +2,4 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$ROOT/build_samurai_v320.sh" "$@"
+exec bash "$ROOT/build_samurai_v320.sh" "$@"
