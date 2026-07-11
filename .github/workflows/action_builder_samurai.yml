@@ -1,21 +1,21 @@
-name: Build Samurai OpenELA Kernel
+name: Build Samurai OpenELA 4.14.357 KSU-Next v3.2
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - los23-test
+      - openela-357-ksunext-v3.2-stable
 
 permissions:
   contents: write
 
 concurrency:
-  group: samurai-los23-test-${{ github.ref }}
-  cancel-in-progress: false
+  group: samurai-4.14.357-v3.2-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Realme X2 Pro - latest KernelSU-Next legacy
+    name: Built-in KernelSU-Next v3.2 legacy
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
@@ -23,8 +23,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          submodules: recursive
+          fetch-depth: 1
 
       - name: Set timezone
         run: sudo timedatectl set-timezone Asia/Dhaka
@@ -59,36 +58,63 @@ jobs:
         uses: actions/cache@v4
         with:
           path: toolchains/clang-r547379
-          key: ${{ runner.os }}-clang-r547379-v1
+          key: ${{ runner.os }}-clang-r547379-v2
 
-      - name: Prepare build script
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-samurai-v3.2-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-samurai-v3.2-
+
+      - name: Prepare build environment
         run: |
           sed -i 's/\r$//' build_script.sh
           chmod +x build_script.sh
+          chmod +x scripts/kconfig/merge_config.sh
+          sed -i 's/^cmd_mkdtimg = python2 /cmd_mkdtimg = python3 /' scripts/Makefile.lib
+          sed -i \
+            -e "s/array('c', ' ' \* self.__metadata_size)/array('b', b' ' * self.__metadata_size)/" \
+            -e 's/xrange(/range(/g' \
+            -e 's/dt_entry_buf = ""/dt_entry_buf = b""/' \
+            -e 's/self.dt_entries_offset \/ 4/self.dt_entries_offset \/\/ 4/' \
+            -e 's/(self.dt_entries_offset - self._DT_TABLE_HEADER_SIZE) \/ 4/(self.dt_entries_offset - self._DT_TABLE_HEADER_SIZE) \/\/ 4/' \
+            scripts/dtc/libfdt/mkdtboimg.py
+          python3 -m py_compile scripts/dtc/libfdt/mkdtboimg.py
 
       - name: Build kernel
         id: build
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: ./build_script.sh
 
-      - name: Verify build outputs
+      - name: Verify outputs
+        if: success()
         run: |
           test -s "${{ steps.build.outputs.zip_path }}"
           test -s "${{ steps.build.outputs.build_log }}"
           test -s "${{ steps.build.outputs.build_info }}"
           unzip -t "${{ steps.build.outputs.zip_path }}"
+          grep -q "Kernel: 4.14.357" "${{ steps.build.outputs.build_info }}"
+          grep -q "Integration: built-in legacy" "${{ steps.build.outputs.build_info }}"
+          grep -q "KernelSU-Next baseline: pinned v3.2" "${{ steps.build.outputs.build_info }}"
+          grep -q "Kernel version spoof: disabled" "${{ steps.build.outputs.build_info }}"
 
-      - name: Upload build log
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: samurai-build-log-${{ github.run_number }}
+          name: samurai-v3.2-diagnostics-${{ github.run_number }}
           path: |
             build.log
             build-info.txt
+            out/.config
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Upload kernel ZIP artifact
+      - name: Upload kernel ZIP
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.zip_name }}
@@ -96,15 +122,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Generate release tag
+      - name: Generate release metadata
+        if: success()
         id: release
         run: |
           TIMESTAMP="$(date +'%Y%m%d-%H%M%S')"
-          TAG="samurai-los23-test-${GITHUB_RUN_NUMBER}-${TIMESTAMP}"
+          TAG="samurai-4.14.357-ksunext-v3.2-${GITHUB_RUN_NUMBER}-${TIMESTAMP}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "name=Samurai OpenELA 4.14.357 - $TIMESTAMP" >> "$GITHUB_OUTPUT"
+          echo "name=Samurai OpenELA 4.14.357 KSU-Next v3.2 - $TIMESTAMP" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
@@ -112,18 +140,22 @@ jobs:
           name: ${{ steps.release.outputs.name }}
           body: |
             Device: Realme X2 Pro (samurai / RMX1931)
-            Source branch: los23-test
             Kernel: OpenELA 4.14.357
-            KernelSU-Next branch: legacy
+            KernelSU-Next baseline: pinned v3.2
             KernelSU-Next revision: ${{ steps.build.outputs.ksu_describe }}
             KernelSU-Next commit: ${{ steps.build.outputs.ksu_commit }}
-            Hook mode: Kprobes
+            Integration: built-in legacy
+            Hook backend: KernelSU-Next v3.2 Kprobes
+            Kernel version spoof: disabled
+            Android BPF override: device tree ro.bpf.kver_override=5.10.239
+            Performance baseline: unchanged
+            Source branch: ${{ github.ref_name }}
             Source commit: ${{ github.sha }}
           files: |
             ${{ steps.build.outputs.zip_path }}
             ${{ steps.build.outputs.build_log }}
             ${{ steps.build.outputs.build_info }}
           fail_on_unmatched_files: true
-          make_latest: true
+          make_latest: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
