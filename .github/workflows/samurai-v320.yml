@@ -11,6 +11,7 @@ on:
       - 'arch/arm64/configs/ksunext_v320_legacy.config'
       - 'patches/ksunext/**'
       - 'build_samurai_v320.sh'
+      - 'build_script.sh'
       - '.github/workflows/samurai-v320.yml'
       - 'Makefile'
       - 'drivers/**'
@@ -82,8 +83,8 @@ jobs:
 
       - name: Prepare legacy build tools
         run: |
-          sed -i 's/\r$//' build_samurai_v320.sh
-          chmod +x build_samurai_v320.sh scripts/kconfig/merge_config.sh
+          sed -i 's/\r$//' build_samurai_v320.sh build_script.sh
+          chmod +x build_samurai_v320.sh build_script.sh scripts/kconfig/merge_config.sh
           sed -i 's/^cmd_mkdtimg = python2 /cmd_mkdtimg = python3 /' scripts/Makefile.lib
           sed -i \
             -e "s/array('c', ' ' \* self.__metadata_size)/array('b', b' ' * self.__metadata_size)/" \
@@ -94,6 +95,7 @@ jobs:
             scripts/dtc/libfdt/mkdtboimg.py
           python3 -m py_compile scripts/dtc/libfdt/mkdtboimg.py
           bash -n build_samurai_v320.sh
+          bash -n build_script.sh
 
       - name: Build kernel
         id: build
@@ -115,7 +117,8 @@ jobs:
           grep -q '^CONFIG_KPROBES=y$' out/.config
           grep -q '^CONFIG_KRETPROBES=y$' out/.config
           grep -q '^Kernel: 4.14.357-openela$' "${{ steps.build.outputs.build_info }}"
-          grep -q '^Integration: built-in GKI legacy$' "${{ steps.build.outputs.build_info }}"
+          grep -q '^Integration: built-in legacy$' "${{ steps.build.outputs.build_info }}"
+          grep -q '^GKI mode: built-in GKI legacy$' "${{ steps.build.outputs.build_info }}"
           grep -q '^KSU input-hook synchronization fix: applied$' "${{ steps.build.outputs.build_info }}"
 
       - name: Upload diagnostics
