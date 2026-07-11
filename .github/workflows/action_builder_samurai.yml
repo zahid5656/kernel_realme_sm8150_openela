@@ -1,0 +1,129 @@
+name: Build Samurai OpenELA Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - los23-test
+
+permissions:
+  contents: write
+
+concurrency:
+  group: samurai-los23-test-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Realme X2 Pro - latest KernelSU-Next legacy
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set timezone
+        run: sudo timedatectl set-timezone Asia/Dhaka
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            cpio \
+            curl \
+            device-tree-compiler \
+            flex \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            python-is-python3 \
+            rsync \
+            unzip \
+            wget \
+            zip \
+            zlib1g-dev
+
+      - name: Restore clang cache
+        uses: actions/cache@v4
+        with:
+          path: toolchains/clang-r547379
+          key: ${{ runner.os }}-clang-r547379-v1
+
+      - name: Prepare build script
+        run: |
+          sed -i 's/\r$//' build_script.sh
+          chmod +x build_script.sh
+
+      - name: Build kernel
+        id: build
+        run: ./build_script.sh
+
+      - name: Verify build outputs
+        run: |
+          test -s "${{ steps.build.outputs.zip_path }}"
+          test -s "${{ steps.build.outputs.build_log }}"
+          test -s "${{ steps.build.outputs.build_info }}"
+          unzip -t "${{ steps.build.outputs.zip_path }}"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: samurai-build-log-${{ github.run_number }}
+          path: |
+            build.log
+            build-info.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload kernel ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.zip_name }}
+          path: ${{ steps.build.outputs.zip_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Generate release tag
+        id: release
+        run: |
+          TIMESTAMP="$(date +'%Y%m%d-%H%M%S')"
+          TAG="samurai-los23-test-${GITHUB_RUN_NUMBER}-${TIMESTAMP}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=Samurai OpenELA 4.14.357 - $TIMESTAMP" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.release.outputs.name }}
+          body: |
+            Device: Realme X2 Pro (samurai / RMX1931)
+            Source branch: los23-test
+            Kernel: OpenELA 4.14.357
+            KernelSU-Next branch: legacy
+            KernelSU-Next revision: ${{ steps.build.outputs.ksu_describe }}
+            KernelSU-Next commit: ${{ steps.build.outputs.ksu_commit }}
+            Hook mode: Kprobes
+            Source commit: ${{ github.sha }}
+          files: |
+            ${{ steps.build.outputs.zip_path }}
+            ${{ steps.build.outputs.build_log }}
+            ${{ steps.build.outputs.build_info }}
+          fail_on_unmatched_files: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
