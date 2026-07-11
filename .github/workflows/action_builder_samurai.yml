@@ -1,26 +1,26 @@
-name: Build Samurai OpenELA 4.14.357 KSU-Next v3.2
+name: Validate Samurai OpenELA 4.14.357
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     branches:
-      - openela-357-ksunext-v3.2-stable
+      - los23-test
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: samurai-4.14.357-v3.2-${{ github.ref }}
+  group: samurai-pr-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Built-in KernelSU-Next v3.2 legacy
+    name: Kernel build validation
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
-      - name: Checkout source
+      - name: Checkout pull request source
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -64,9 +64,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: ${{ runner.os }}-samurai-v3.2-${{ github.sha }}
+          key: ${{ runner.os }}-samurai-r547379-${{ hashFiles('arch/arm64/configs/samurai_defconfig', 'arch/arm64/configs/ksunext_v32_legacy.config', 'build_script.sh') }}
           restore-keys: |
-            ${{ runner.os }}-samurai-v3.2-
+            ${{ runner.os }}-samurai-r547379-
 
       - name: Prepare build environment
         run: |
@@ -99,13 +99,12 @@ jobs:
           grep -q "Kernel: 4.14.357" "${{ steps.build.outputs.build_info }}"
           grep -q "Integration: built-in legacy" "${{ steps.build.outputs.build_info }}"
           grep -q "KernelSU-Next baseline: pinned v3.2" "${{ steps.build.outputs.build_info }}"
-          grep -q "Kernel version spoof: disabled" "${{ steps.build.outputs.build_info }}"
 
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: samurai-v3.2-diagnostics-${{ github.run_number }}
+          name: samurai-pr-diagnostics-${{ github.run_number }}
           path: |
             build.log
             build-info.txt
@@ -121,41 +120,3 @@ jobs:
           path: ${{ steps.build.outputs.zip_path }}
           if-no-files-found: error
           retention-days: 14
-
-      - name: Generate release metadata
-        if: success()
-        id: release
-        run: |
-          TIMESTAMP="$(date +'%Y%m%d-%H%M%S')"
-          TAG="samurai-4.14.357-ksunext-v3.2-${GITHUB_RUN_NUMBER}-${TIMESTAMP}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "name=Samurai OpenELA 4.14.357 KSU-Next v3.2 - $TIMESTAMP" >> "$GITHUB_OUTPUT"
-
-      - name: Publish GitHub release
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          name: ${{ steps.release.outputs.name }}
-          body: |
-            Device: Realme X2 Pro (samurai / RMX1931)
-            Kernel: OpenELA 4.14.357
-            KernelSU-Next baseline: pinned v3.2
-            KernelSU-Next revision: ${{ steps.build.outputs.ksu_describe }}
-            KernelSU-Next commit: ${{ steps.build.outputs.ksu_commit }}
-            Integration: built-in legacy
-            Hook backend: KernelSU-Next v3.2 Kprobes
-            Kernel version spoof: disabled
-            Android BPF override: device tree ro.bpf.kver_override=5.10.239
-            Performance baseline: unchanged
-            Source branch: ${{ github.ref_name }}
-            Source commit: ${{ github.sha }}
-          files: |
-            ${{ steps.build.outputs.zip_path }}
-            ${{ steps.build.outputs.build_log }}
-            ${{ steps.build.outputs.build_info }}
-          fail_on_unmatched_files: true
-          make_latest: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
