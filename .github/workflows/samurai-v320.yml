@@ -1,3 +1,4 @@
+# Validation trigger: patched KernelSU-Next v3.2.0 legacy
 name: Build Samurai OpenELA 4.14.357 KSU Next v3.2.0
 
 on:
